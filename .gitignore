@@ -1,0 +1,31 @@
+# ── 敏感信息（绝不提交）────────────────────────────────────────────────
+.env
+ui/.env
+*.bak
+*.bak.*
+config/cache.db
+config/geoip.metadb
+
+# ── 运行时数据（config.yaml 含密钥，只提交 .example）───────────────────
+config/config.yaml
+config/config.yaml.deploy-*
+config/providers/*.yaml
+config/providers/*.txt
+!config/providers/.gitkeep
+config-backups/
+
+# ── 二进制（体积大，用脚本下载）────────────────────────────────────────
+bin/mihomo
+mihomo
+
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ── 编辑器 / 系统 ─────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+*.swp

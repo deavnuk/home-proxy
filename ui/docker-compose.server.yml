@@ -1,0 +1,71 @@
+# ============================================================================
+#  <HOSTNAME> (<SERVER_IP>) — 生产部署（unix socket 方案）
+#  ---------------------------------------------------------------------------
+#  为什么用 unix socket（本机实测结论，别改回 TCP）：
+#
+#  ① 宿主 ufw 是 DEFAULT_INPUT_POLICY=DROP
+#     · 宿主直接监听的端口（含 network_mode: host 的容器端口）全被 DROP
+#       → 外部打不开，也读不到 mihomo:9090
+#     · 只有 docker 的 -p 端口发布能绕过 ufw（走 nat/DNAT 链）
+#  ② container -> 宿主机任何端口 也被 DROP
+#     （实测 host-gateway:9090 = 000，连 ufw 已放行的 8000 都是 000）
+#     → UI 容器无法用 host.docker.internal / 宿主 LAN IP 连 mihomo
+#
+#  解法：mihomo 开 unix socket 控制接口（-ext-ctl-unix），
+#        把 socket 文件挂进 UI 容器。
+#        既不经过 TCP 端口，也不经过 ufw，最稳。
+#
+#  形态：
+#    · UI        = bridge + ports 8081（走 docker DNAT 绕 ufw，外部可访问）
+#    · mihomo    = 宿主机进程/服务，额外开 -ext-ctl-unix
+#                  socket 路径 /run/mihomo/ctl.sock（挂进容器）
+#    · TPROXY    = 由宿主 mihomo 负责（见 scripts/deploy-tproxy.sh）
+#
+#  前置：宿主 mihomo 启动时带 -ext-ctl-unix /run/mihomo/ctl.sock
+#        （deploy-tproxy.sh 已写进 systemd unit）
+# ============================================================================
+
+services:
+  ui:
+    build:
+      context: ./backend
+    image: home-proxy-ui:latest
+    container_name: home-proxy-ui
+    restart: unless-stopped
+
+    user: "${PUID:-1000}:${PGID:-1000}"
+
+    # bridge + ports：唯一能绕过 ufw 对外的途径
+    ports:
+      - "${UI_PORT:-8081}:8080"
+
+    environment:
+      # ★ unix socket：不经 TCP，不受 ufw 影响
+      MIHOMO_API: unix:///run/mihomo/ctl.sock
+      MIHOMO_SECRET: ${MIHOMO_SECRET:?请设置 MIHOMO_SECRET}
+      MIHOMO_CONFIG: ${MIHOMO_HOME:-/opt/mihomo}/config.yaml
+      MIHOMO_BACKUP_DIR: /backup
+      UI_USER: ${UI_USER:-admin}
+      UI_PASS: ${UI_PASS:?请设置 UI_PASS}
+      UI_READ_ONLY: ${UI_READ_ONLY:-0}
+      NFT_TABLE: ${NFT_TABLE:-inet transp}
+
+    volumes:
+      # 配置文件（同路径挂载，mihomo 热重载才认）
+      - ${MIHOMO_HOME:-/opt/mihomo}:${MIHOMO_HOME:-/opt/mihomo}:rw
+      - ${BACKUP_DIR:-./backups}:/backup:rw
+      # ★ 控制接口 socket（宿主目录 -> 容器同路径）
+      - ${MIHOMO_RUN_DIR:-/run/mihomo}:/run/mihomo:rw
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

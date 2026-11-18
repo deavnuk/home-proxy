@@ -1,0 +1,106 @@
+# ============================================================================
+#  Home Proxy — 全容器化部署（mihomo + Web UI）
+#  ---------------------------------------------------------------------------
+#  这一份是「推荐」方案：mihomo 和 UI 都由 compose 管理。
+#
+#  ★ 关键约束，务必理解：
+#
+#  1) mihomo 必须用 network_mode: host
+#     TPROXY/REDIRECT 依赖「客户端流量能被丢进 mihomo 的监听套接字」，这要求
+#     mihomo 与宿主网络栈共享命名空间。bridge 模式下 nft 规则管不到它。
+#
+#  2) 透明代理的 nft 规则必须装在宿主机（不在容器里）
+#     容器即便有 NET_ADMIN 也只影响自己的 netns。若用 host 模式，容器与宿主
+#     共享 netns，规则才生效 —— 但也因此容器内 nft 命令会直接改宿主规则，
+#     所以本 compose 只让 mihomo 跑 host 模式，nft 仍由宿主的 systemd 管理。
+#     => 先按 README 在宿主机装好 nft 规则，再起本 compose。
+#
+#  3) MIHOMO_HOME 挂在「完全相同的路径」到 mihomo 和 UI 容器
+#     mihomo 只允许热重载自己的 -d 目录下的文件；UI 要改配置就必须看到同一个
+#     绝对路径。所以用 ${MIHOMO_HOME}:${MIHOMO_HOME} 同路径挂载，不能映射成
+#     /etc/mihomo 之类。
+#
+#  4) user 要和 config.yaml 属主一致
+#     否则 UI 保存配置会 Permission denied。
+# ============================================================================
+
+services:
+  # ------------------------------------------------------------------ mihomo
+  mihomo:
+    image: metacubex/mihomo:latest
+    container_name: home-proxy-mihomo
+    restart: unless-stopped
+
+    # ★ TPROXY 必需：与宿主共享网络栈
+    network_mode: host
+
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    volumes:
+      # 同路径挂载（见文件头第 3 条）
+      - ${MIHOMO_HOME:-/opt/mihomo}:${MIHOMO_HOME:-/opt/mihomo}
+
+    command: ["-d", "${MIHOMO_HOME:-/opt/mihomo}"]
+
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------- UI
+  ui:
+    build:
+      context: ./backend
+    image: home-proxy-ui:latest
+    container_name: home-proxy-ui
+    restart: unless-stopped
+
+    depends_on:
+      - mihomo
+
+    user: "${PUID:-1000}:${PGID:-1000}"
+
+    ports:
+      - "${UI_PORT:-8080}:8080"
+
+    environment:
+      # mihomo 用 host 模式监听宿主 127.0.0.1:9090，这里经 host-gateway 访问
+      MIHOMO_API: ${MIHOMO_API:-http://host.docker.internal:9090}
+      MIHOMO_SECRET: ${MIHOMO_SECRET:?请设置 MIHOMO_SECRET（= config.yaml 里的 secret）}
+
+      MIHOMO_CONFIG: ${MIHOMO_HOME:-/opt/mihomo}/config.yaml
+      MIHOMO_BACKUP_DIR: /backup
+
+      UI_USER: ${UI_USER:-admin}
+      UI_PASS: ${UI_PASS:?请设置 UI_PASS}
+      UI_READ_ONLY: ${UI_READ_ONLY:-0}
+
+      NFT_TABLE: ${NFT_TABLE:-inet transp}
+
+    volumes:
+      - ${MIHOMO_HOME:-/opt/mihomo}:${MIHOMO_HOME:-/opt/mihomo}:rw
+      - ${BACKUP_DIR:-./backups}:/backup:rw
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

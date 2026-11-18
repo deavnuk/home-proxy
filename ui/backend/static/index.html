@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0e17">
+<title>Home Proxy</title>
+<link rel="icon" href="/favicon.ico">
+<link rel="stylesheet" href="/static/app.css">
+<script>
+  (function () {
+    var t = localStorage.getItem("theme");
+    if (!t) t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body>
+
+<!-- ============================================================ 侧栏 -->
+<aside class="rail">
+  <div class="rail-brand">
+    <img src="/static/favicon.svg" alt="" width="30" height="30">
+    <span>Home Proxy</span>
+  </div>
+
+  <nav class="rail-nav" id="nav">
+    <button class="rail-item active" data-view="home">
+      <svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V21H3z"/></svg>
+      <span>家里</span>
+    </button>
+    <button class="rail-item" data-view="traffic">
+      <svg viewBox="0 0 24 24"><path d="M3 17h4v4H3zM10 9h4v12h-4zM17 13h4v8h-4z"/></svg>
+      <span>分流</span>
+    </button>
+    <button class="rail-item" data-view="nodes">
+      <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v6a3 3 0 0 0 3 3h6"/></svg>
+      <span>节点</span>
+    </button>
+    <button class="rail-item" data-view="doctor">
+      <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/><path d="M12 8v5M12 16h.01"/></svg>
+      <span>诊断</span>
+    </button>
+    <button class="rail-item" data-view="settings">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>
+      <span>设置</span>
+    </button>
+  </nav>
+
+  <div class="rail-foot">
+    <div class="speedo">
+      <div class="speedo-row"><i>↓</i><b id="foot-down">0</b></div>
+      <div class="speedo-row"><i>↑</i><b id="foot-up">0</b></div>
+    </div>
+    <button class="rail-icon" id="btn-theme" title="切换主题">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>
+    </button>
+  </div>
+</aside>
+
+<!-- ============================================================ 主区 -->
+<main class="stage">
+
+  <!-- ===================== 家里（首页） ===================== -->
+  <section class="page" id="page-home">
+    <!-- 核心状态：一眼看懂「能不能上网」 -->
+    <div class="verdict" id="verdict">
+      <div class="verdict-main">
+        <div class="verdict-icon" id="verdict-icon">
+          <svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+        </div>
+        <div class="verdict-text">
+          <h1 id="verdict-title">正在检查…</h1>
+          <p id="verdict-sub">稍候</p>
+        </div>
+      </div>
+      <div class="verdict-actions" id="verdict-actions"></div>
+    </div>
+
+    <!-- 三个最常用动作 -->
+    <div class="quick">
+      <div class="quick-card" id="q-mode">
+        <span class="quick-label">代理模式</span>
+        <div class="seg" id="seg-mode">
+          <button data-v="rule" class="active">智能</button>
+          <button data-v="global">全局</button>
+          <button data-v="direct">直连</button>
+        </div>
+        <span class="quick-hint" id="mode-hint">按 gfwlist 自动分流</span>
+      </div>
+
+      <div class="quick-card quick-wrap" id="q-strategy">
+        <span class="quick-label">选节点方式</span>
+        <div class="seg seg-wrap" id="seg-strategy">
+          <button data-v="balance" title="多节点分摊，单个挂了立刻换">分散容灾</button>
+          <button data-v="fallback" title="按顺序用第一个可用的">顺序备用</button>
+          <button data-v="auto" title="永远用延迟最低的">选最快的</button>
+          <button data-v="DIRECT" title="不走代理，全部直连">不走代理</button>
+        </div>
+        <span class="quick-hint" id="strategy-hint">—</span>
+      </div>
+
+      <div class="quick-card quick-action" id="q-test">
+        <span class="quick-label">全部测速</span>
+        <div class="quick-value" id="test-result">点击开始</div>
+        <button class="btn btn-sm btn-primary" id="btn-quick-test">测速</button>
+      </div>
+    </div>
+
+    <!-- 流量 -->
+    <div class="panel">
+      <div class="panel-head">
+        <h2>实时流量</h2>
+        <div class="panel-meta">
+          <span id="traffic-now">↓ 0 B/s · ↑ 0 B/s</span>
+        </div>
+      </div>
+      <canvas class="chart" id="chart" height="140"></canvas>
+      <div class="chart-legend">
+        <span><i class="dot-down"></i>下载</span>
+        <span><i class="dot-up"></i>上传</span>
+        <span class="chart-total" id="traffic-total">累计 ↓0 B · ↑0 B</span>
+      </div>
+    </div>
+
+    <!-- 今日概况 -->
+    <div class="stats-row">
+      <div class="stat-mini"><span>活动连接</span><b id="s-conn">0</b></div>
+      <div class="stat-mini"><span>内存占用</span><b id="s-mem">—</b></div>
+      <div class="stat-mini"><span>内核版本</span><b id="s-ver">—</b></div>
+    </div>
+  </section>
+
+  <!-- ===================== 分流 ===================== -->
+  <section class="page hidden" id="page-traffic">
+    <header class="page-head">
+      <h1>哪些网站走代理</h1>
+      <p>不用记规则。想知道某个网站会不会走代理，直接在下面查。</p>
+    </header>
+
+    <!-- 最常用：查一个网站 -->
+    <div class="panel panel-lead">
+      <div class="panel-head"><h2>这个网站会走代理吗？</h2></div>
+      <div class="probe">
+        <input class="input input-lg" id="probe-input" placeholder="输入网站域名，例如 www.google.com">
+        <button class="btn btn-primary" id="btn-probe">查询</button>
+      </div>
+      <div id="probe-result" class="probe-result"></div>
+      <p class="panel-hint">
+        判断依据：被墙的网站会拿到一个特殊 IP 走代理，其它直接连接。
+      </p>
+    </div>
+
+    <div class="two-col">
+      <!-- 你加的规则 -->
+      <div class="panel">
+        <div class="panel-head">
+          <h2>我指定的网站 <small id="myrules-count"></small></h2>
+          <button class="btn btn-sm btn-primary" id="btn-add-rule">+ 指定一个</button>
+        </div>
+        <p class="panel-hint">
+          自动分流偶尔判断错时，在这里覆盖。比如让公司内网直连、让某网站固定走代理。
+        </p>
+        <div id="myrules" class="myrules"></div>
+      </div>
+
+      <!-- 自动清单 -->
+      <div class="panel">
+        <div class="panel-head">
+          <h2>自动维护的清单</h2>
+          <button class="btn btn-sm btn-ghost" id="btn-refresh-rules">更新</button>
+        </div>
+        <p class="panel-hint">
+          这些清单由上游项目每天更新，你不用管。数字是包含的网站数量。
+        </p>
+        <div id="rulesets" class="rulesets"></div>
+        <button class="btn btn-sm btn-ghost" id="btn-toggle-raw" style="margin-top:12px">
+          显示完整规则表
+        </button>
+      </div>
+    </div>
+
+    <!-- 完整规则表（默认折叠） -->
+    <div class="panel hidden" id="raw-rules-panel">
+      <div class="panel-head">
+        <h2>完整规则表 <small id="rules-count"></small></h2>
+        <input class="input input-sm" id="rule-filter" placeholder="过滤…">
+      </div>
+      <p class="panel-hint">
+        自上而下匹配，命中第一条即生效。这张表给排查用，日常不需要看。
+      </p>
+      <div class="table-wrap">
+        <table class="table" id="rules-table">
+          <thead><tr><th>#</th><th>类型</th><th>匹配</th><th>去向</th><th>命中</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 节点 ===================== -->
+  <section class="page hidden" id="page-nodes">
+    <header class="page-head">
+      <h1>节点</h1>
+      <p>用哪个节点出网。延迟越低越快，但更重要的是稳定。</p>
+    </header>
+
+    <!-- 订阅：节点的来源 -->
+    <div class="panel">
+      <div class="panel-head">
+        <h2>订阅 <small id="subs-count"></small></h2>
+        <button class="btn btn-sm btn-primary" id="btn-add-sub">+ 添加</button>
+      </div>
+      <p class="panel-hint">
+        订阅是机场或自建面板给的链接，里面包含一批节点。每天自动更新。
+      </p>
+      <div id="subs" class="rulesets"></div>
+    </div>
+
+    <!-- 当前选择 -->
+    <div class="panel">
+      <div class="panel-head">
+        <h2>用哪种方式选节点</h2>
+        <button class="btn btn-sm" id="btn-test-all">全部测速</button>
+      </div>
+      <p class="panel-hint">
+        节点可以按不同规则自动选择。下面的每一组就是一"种"规则，点哪个就用哪个。
+      </p>
+      <div id="groups" class="groups"></div>
+    </div>
+
+    <!-- 节点 -->
+    <div class="panel">
+      <div class="panel-head">
+        <h2>全部节点 <small id="nodes-count"></small></h2>
+        <div class="row-gap">
+          <select class="input input-sm" id="node-sort">
+            <option value="default">默认顺序</option>
+            <option value="delay">按延迟</option>
+            <option value="name">按名称</option>
+          </select>
+          <input class="input input-sm" id="node-search" placeholder="搜索节点…">
+        </div>
+      </div>
+      <div id="nodes" class="nodelist"></div>
+    </div>
+  </section>
+
+  <!-- ===================== 诊断 ===================== -->
+  <section class="page hidden" id="page-doctor">
+    <header class="page-head">
+      <h1>诊断</h1>
+      <p>出问题时看这里。每项异常都会给出可以直接执行的修复命令。</p>
+    </header>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>体检 <small id="doctor-summary"></small></h2>
+        <button class="btn btn-sm" id="btn-recheck">重新体检</button>
+      </div>
+      <div id="checks" class="checks"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>活动连接 <small id="conn-count"></small></h2>
+        <div class="row-gap">
+          <input class="input input-sm" id="conn-filter" placeholder="过滤…">
+          <button class="btn btn-sm btn-danger" id="btn-close-all">全部断开</button>
+        </div>
+      </div>
+      <div class="table-wrap" style="max-height:34vh">
+        <table class="table" id="conn-table">
+          <thead><tr><th>目标</th><th>规则</th><th>节点</th><th>流量</th><th>时长</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>实时日志</h2>
+        <div class="row-gap">
+          <select class="input input-sm" id="logs-level">
+            <option value="info">info</option>
+            <option value="warning">warning</option>
+            <option value="error">error</option>
+            <option value="debug">debug</option>
+          </select>
+          <input class="input input-sm" id="logs-filter" placeholder="过滤…">
+          <button class="btn btn-sm" id="btn-logs-toggle">暂停</button>
+        </div>
+      </div>
+      <div class="logbox" id="logbox"></div>
+    </div>
+  </section>
+
+  <!-- ===================== 设置 ===================== -->
+  <section class="page hidden" id="page-settings">
+    <header class="page-head">
+      <h1>设置</h1>
+      <p>改完立即生效，重启后恢复到配置文件里的值。要永久生效请用下方表单保存。</p>
+    </header>
+
+    <!-- ========== 基本设置（带解释） ========== -->
+    <div class="panel">
+      <div class="panel-head"><h2>基本设置</h2></div>
+
+      <div class="setting">
+        <div class="setting-info">
+          <label class="setting-label" for="sel-mode-inline">代理模式</label>
+          <p class="setting-desc">决定哪些流量走代理。默认「智能分流」即可。</p>
+        </div>
+        <select class="input" id="sel-mode-inline">
+          <option value="rule">智能分流（推荐）</option>
+          <option value="global">全局代理（全部走代理）</option>
+          <option value="direct">全部直连（不走代理）</option>
+        </select>
+      </div>
+
+      <div class="setting">
+        <div class="setting-info">
+          <label class="setting-label" for="sw-tcpconc">TCP 并发</label>
+          <p class="setting-desc">
+            建立连接时同时尝试多个 IP，取最快的那个响应。网页通常部署在多个服务器上，
+            开启后打开速度明显更快。<b>推荐开启</b>。
+          </p>
+        </div>
+        <label class="switch"><input type="checkbox" id="sw-tcpconc"><span></span></label>
+      </div>
+
+      <div class="setting">
+        <div class="setting-info">
+          <label class="setting-label" for="sw-ipv6">IPv6</label>
+          <p class="setting-desc">
+            允许用 IPv6 协议访问网站。国内 IPv6 普及度不一，开启后在部分网站可能出现
+            访问异常，且与分流机制配合不佳。<b>除非你有 IPv6 需求，建议关闭</b>。
+          </p>
+        </div>
+        <label class="switch"><input type="checkbox" id="sw-ipv6"><span></span></label>
+      </div>
+
+      <div class="setting">
+        <div class="setting-info">
+          <label class="setting-label" for="sw-lan">允许其他设备连代理</label>
+          <p class="setting-desc">
+            开放本机代理端口，让手机、电视等设备可以手动设置代理地址来使用。
+            只用自动分流（网关模式）的话<b>不需要开启</b>，开启会增加安全风险。
+          </p>
+        </div>
+        <label class="switch"><input type="checkbox" id="sw-lan"><span></span></label>
+      </div>
+
+      <div class="setting">
+        <div class="setting-info">
+          <label class="setting-label" for="sel-log">日志详细程度</label>
+          <p class="setting-desc">
+            日常用「info」即可。「debug」会记录每个连接细节，只在你排查问题需要看日志时才开，
+            否则日志文件会增长很快。
+          </p>
+        </div>
+        <select class="input" id="sel-log">
+          <option value="silent">关闭（不记录）</option>
+          <option value="error">只记错误</option>
+          <option value="warning">记错误和警告</option>
+          <option value="info">普通（推荐）</option>
+          <option value="debug">详细（排查问题用）</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- ========== 端口（只读） ========== -->
+    <div class="panel">
+      <div class="panel-head"><h2>端口占用</h2></div>
+      <p class="panel-hint">这些端口由程序自动管理，一般不需要改。</p>
+      <dl class="kv" id="ports-info"></dl>
+    </div>
+
+    <!-- ========== 高级配置（表单） ========== -->
+    <div class="panel">
+      <div class="panel-head">
+        <h2>高级配置</h2>
+        <button class="btn btn-sm btn-primary" id="btn-adv-save">保存到配置文件</button>
+      </div>
+      <p class="panel-hint">
+        下面这些会写入配置文件，重启后依然有效。改错可能导致家里断网，不确定的项保持默认。
+      </p>
+
+      <div class="adv-grid" id="adv-grid"></div>
+    </div>
+
+    <!-- ========== 源文件（默认隐藏） ========== -->
+    <div class="panel">
+      <div class="panel-head">
+        <h2>直接编辑配置文件</h2>
+        <button class="btn btn-sm btn-ghost" id="btn-toggle-raw-config">显示源文件</button>
+      </div>
+      <div class="hidden" id="raw-config-box">
+        <p class="panel-hint" style="color:var(--warn)">
+          ⚠️ 直接改这份 YAML 有风险。格式写错会导致代理无法启动、家里断网。
+          上面的表单能覆盖大部分需求，只有在表单里没有的配置项才需要动这里。
+        </p>
+        <div class="row-gap" style="margin-bottom:12px">
+          <button class="btn btn-sm btn-ghost" id="btn-config-reload">放弃修改并重载</button>
+          <button class="btn btn-sm btn-primary" id="btn-config-save">保存源文件</button>
+        </div>
+        <textarea id="config-editor" class="editor" spellcheck="false"></textarea>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============================================================ 弹层 -->
+<div class="modal hidden" id="sub-modal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3 id="sub-modal-title">添加订阅</h3>
+      <button class="btn btn-sm btn-ghost" id="sub-modal-close">✕</button>
+    </div>
+    <div class="form">
+      <label>名称
+        <input class="input" id="sub-name" placeholder="如 sub-main">
+        <small class="field-err"></small>
+      </label>
+      <label>订阅链接
+        <input class="input" id="sub-url" placeholder="https://...">
+        <small class="field-err"></small>
+      </label>
+      <label>自动更新间隔（小时）
+        <input class="input" id="sub-interval" type="number" value="6">
+      </label>
+      <label>只要包含这些关键词的节点（可选）
+        <input class="input" id="sub-filter" placeholder="如 香港|HK|日本">
+      </label>
+      <label>排除含这些关键词的节点（可选）
+        <input class="input" id="sub-exclude" placeholder="如 过期|剩余|官网">
+      </label>
+      <div class="form-actions">
+        <button class="btn" id="sub-cancel">取消</button>
+        <button class="btn btn-primary" id="sub-save">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal hidden" id="rule-modal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3 id="rule-modal-title">添加规则</h3>
+      <button class="btn btn-sm btn-ghost" id="rule-modal-close">✕</button>
+    </div>
+    <div class="form">
+      <label>网站域名
+        <input class="input" id="rule-domain" placeholder="如 company.com">
+        <small class="field-err"></small>
+      </label>
+      <p class="panel-hint" style="margin:-4px 0 4px">
+        填 example.com 会同时作用于它所有子域名（www.example.com 等）。
+      </p>
+      <label>怎么处理
+        <select class="input" id="rule-action">
+          <option value="PROXY">走代理（默认）</option>
+          <option value="DIRECT">直连，不经过代理</option>
+          <option value="REJECT">拦截，不加载</option>
+        </select>
+      </label>
+      <div class="form-actions">
+        <button class="btn" id="rule-cancel">取消</button>
+        <button class="btn btn-primary" id="rule-save">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal kbd-modal hidden" id="kbd-modal">
+  <div class="modal-box">
+    <div class="modal-head"><h3>快捷键</h3><button class="btn btn-sm btn-ghost" id="kbd-close">✕</button></div>
+    <div class="kbd-list">
+      <div class="kbd-row"><span>切换页面</span><span><kbd>1</kbd>–<kbd>5</kbd></span></div>
+      <div class="kbd-row"><span>切换主题</span><span><kbd>T</kbd></span></div>
+      <div class="kbd-row"><span>重新体检</span><span><kbd>R</kbd></span></div>
+      <div class="kbd-row"><span>全部测速</span><span><kbd>F</kbd></span></div>
+      <div class="kbd-row"><span>关闭弹窗</span><span><kbd>Esc</kbd></span></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

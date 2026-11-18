@@ -1,0 +1,13 @@
+[Unit]
+Description=Update mihomo rule sets (gfwlist)
+After=network-online.target mihomo.service
+Wants=network-online.target
+Requires=mihomo.service
+
+[Service]
+Type=oneshot
+Environment=CONF_DIR=/etc/mihomo
+Environment=PROXY_HTTP=http://127.0.0.1:7890
+ExecStart=/usr/local/bin/mihomo-update-rules
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,59 @@
+# 只跑 UI（mihomo 已在宿主机用 systemd 跑着）——最轻量，推荐先用这个
+#
+# 用法：
+#   cp .env.example .env && vi .env      # 填 MIHOMO_SECRET / UI_PASS
+#   docker compose -f docker-compose.ui-only.yml up -d
+#
+# 前置条件：
+#   宿主机 mihomo 的 external-controller 监听 0.0.0.0:9090（或宿主 LAN IP），
+#   否则容器访问不到 127.0.0.1:9090。
+#     sed -i 's|external-controller: 127.0.0.1:9090|external-controller: 0.0.0.0:9090|' \
+#       /opt/mihomo/config.yaml
+
+services:
+  ui:
+    build:
+      context: ./backend
+    image: home-proxy-ui:latest
+    container_name: home-proxy-ui
+    restart: unless-stopped
+
+    user: "${PUID:-1000}:${PGID:-1000}"
+
+    # ★ 用 host 网络：绕开「宿主机防火墙拦截 docker0→9090」的常见问题，
+    #   也让透明代理状态面板能读到宿主机的 nft 规则（同一 netns）。
+    #   代价：UI 端口不要再用 ports: 映射（host 模式下无效），直接监听宿主机 ${UI_PORT}。
+    network_mode: host
+
+    environment:
+      # host 网络下容器与 mihomo 同栈，直接用回环地址
+      MIHOMO_API: ${MIHOMO_API:-http://127.0.0.1:9090}
+      MIHOMO_SECRET: ${MIHOMO_SECRET:?请设置 MIHOMO_SECRET}
+      MIHOMO_CONFIG: ${MIHOMO_HOME:-/opt/mihomo}/config.yaml
+      MIHOMO_BACKUP_DIR: /backup
+      UI_USER: ${UI_USER:-admin}
+      UI_PASS: ${UI_PASS:?请设置 UI_PASS}
+      UI_READ_ONLY: ${UI_READ_ONLY:-0}
+      NFT_TABLE: ${NFT_TABLE:-inet transp}
+
+    volumes:
+      # 同路径挂载：容器内路径与宿主机一致，mihomo 才允许热重载
+      - ${MIHOMO_HOME:-/opt/mihomo}:${MIHOMO_HOME:-/opt/mihomo}:rw
+      - ${BACKUP_DIR:-./backups}:/backup:rw
+
+    # 只读探测宿主机 nft 规则（透明代理状态面板）。不需要可删。
+    cap_add:
+      - NET_ADMIN
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${UI_PORT:-8080}/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

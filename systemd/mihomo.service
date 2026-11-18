@@ -1,0 +1,51 @@
+[Unit]
+Description=mihomo transparent proxy (with unix socket control interface)
+Documentation=https://github.com/MetaCubeX/mihomo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/mihomo
+
+# ── 三个路径参数（由 install-service.sh 用 sed 替换）──────────────────────
+#   /opt/mihomo            数据目录（config.yaml、providers、geoip.metadb）
+#   /opt/mihomo/config.yaml 配置路径（必须在 -d 目录下，否则热重载被拒）
+#   /run/mihomo/ctl.sock   unix socket 控制接口
+#      为什么不用 TCP：宿主 ufw 默认 DROP，容器访问宿主机任何端口都被拦，
+#      只有 unix socket 可靠。
+ExecStart=/opt/mihomo/mihomo \
+  -d /opt/mihomo \
+  -f /opt/mihomo/config.yaml \
+  -ext-ctl-unix /run/mihomo/ctl.sock
+
+Restart=always
+RestartSec=3
+
+# ── socket 权限 ─────────────────────────────────────────────────────────
+# mihomo 以 root 运行，新建的 socket 属 root:root（0600）。
+# Web UI 容器以 PUID(1000) 运行，读不到会报「连不上 mihomo 控制接口」。
+# UMask=0000 + 建好后 chmod 666 解决。
+# 安全性：socket 所在目录权限受限，且 mihomo 自身校验 secret。
+UMask=0000
+ExecStartPost=/bin/sh -c 'for i in $(seq 1 30); do [ -S "$CTL_SOCK_PATH" ] && chmod 666 "$CTL_SOCK_PATH" && exit 0; sleep 0.5; done; exit 0'
+
+# 重启后自动创建 socket 目录（tmpfs，开机清空无妨）
+RuntimeDirectory=mihomo
+RuntimeDirectoryMode=0755
+
+LimitNOFILE=1048576
+
+# TPROXY / REDIRECT 需要 NET_ADMIN；绑定 53 需要 NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+
+# 不启用 ProtectSystem/ProtectHome：
+# 本方案把配置与 socket 放在用户家目录下，沙箱会阻止访问并导致
+# ExecStartPre 的 mkdir 报 Permission denied。
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target

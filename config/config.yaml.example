@@ -1,0 +1,255 @@
+# ============================================================================
+#  mihomo (Clash.Meta) — 家庭透明代理核心
+#  ---------------------------------------------------------------------------
+#  分流模型：fake-ip 白名单
+#    · DNS 查询命中 gfwlist  -> 返回假 IP 198.18.x.x  -> 内核 TPROXY 给 mihomo
+#    · 其它域名              -> 返回真实 IP           -> 内核直接转发，满速
+#  验证：mihomo -t 通过；实测 www.google.com -> PROXY[server-proxy]，
+#        www.baidu.com -> DIRECT，baidu/taobao 返回真实 IP，google 返回 198.18.x
+# ============================================================================
+mixed-port: 7890                  # SOCKS/HTTP 混合口（调试/备用）
+redir-port: 7892                  # 本机进程 TCP 透明代理（nft output REDIRECT）
+tproxy-port: 7895                 # LAN 透明代理（nft prerouting TPROXY），TCP+UDP
+allow-lan: true
+bind-address: '*'
+mode: rule
+log-level: info
+ipv6: false                       # 家用先关：双栈 fake-ip 容易踩坑
+unified-delay: true
+tcp-concurrent: true
+find-process-mode: "off"          # 透明代理下用不到进程匹配，关掉省 CPU
+external-controller: 127.0.0.1:9090   # 仅本机；容器走 unix socket
+secret: "CHANGE_ME_TO_RANDOM_STRING"   # 控制接口密码，与 ui/.env 的 MIHOMO_SECRET 保持一致
+keep-alive-interval: 15
+keep-alive-idle: 600
+
+profile:
+  store-selected: true
+  store-fake-ip: true             # 重启后 fake-ip 映射保留，避免老连接失联
+
+listeners:
+  # 备用 SOCKS5（给手机/临时设备手动设代理用）
+  - name: socks-in
+    type: socks
+    port: 7891
+    listen: 0.0.0.0
+    udp: true
+
+# ---------------------------------------------------------------------------
+# DNS（模式 B 部署形态）
+#   客户端 DHCP 里的 DNS 指向本机；nft 把到达本机 :53 的查询重定向到这里。
+#   监听 1053 而不是 53：53 是特权端口，非 root 绑不了；
+#   而 systemd-resolved 已占用 127.0.0.53/54:53，直接用 53 也会冲突。
+#   → 必须配合 net/nftables-transp.conf 的 prerouting_dns 链使用。
+# ---------------------------------------------------------------------------
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter-mode: whitelist   # ★ 只有 gfwlist 命中才给假 IP
+  fake-ip-filter:
+    - 'rule-set:gfw'
+    - 'rule-set:gfw-extra'
+    - '+.lan'
+    - '+.local'
+    - '+.arpa'
+    - 'time.*.com'
+    - 'ntp.*.com'
+    - '+.msftconnecttest.com'
+    - '+.msftncsi.com'
+    - 'localhost.ptlogin2.qq.com'
+  use-hosts: true
+  use-system-hosts: true
+  respect-rules: false
+  # 本机环境：对外 UDP/53 全被封（只有内网 DNS 可达），DoH 可用。
+  # 所以明文 UDP 一律指向内网 DNS，加密查询走 DoH。
+  default-nameserver:              # 只用于解析下面的 DoH 域名，必须是纯 IP
+    - 192.168.1.5
+    - 192.168.1.6
+  nameserver:                      # 国内域名：内网 DNS + DoH，就近 CDN
+    - 192.168.1.5
+    - 192.168.1.6
+    - https://doh.pub/dns-query
+  proxy-server-nameserver:         # 解析代理节点域名，绝不能走代理（鸡生蛋）
+    - 192.168.1.5
+    - 192.168.1.6
+  nameserver-policy:
+    # 被墙域名：用可信境外 DoH 解析真实 IP。
+    # 注意 1.1.1.1/8.8.8.8 的 DoH 在本网络不通（实测 000），
+    # 且这里通常也只会命中 fake-ip 白名单，所以用 doh.pub 兜底即可。
+    'rule-set:gfw,gfw-extra':
+      - https://doh.pub/dns-query
+
+# ---------------------------------------------------------------------------
+# 规则集：gfwlist（域名）+ 国内 CIDR + 直连白名单
+# ---------------------------------------------------------------------------
+rule-providers:
+  gfw:
+    type: http
+    behavior: domain
+    format: yaml
+    interval: 86400
+    proxy: PROXY                   # 通过代理下载，避免拉取时被污染/阻断
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt"
+    path: ./providers/gfw.yaml
+  gfw-extra:
+    # 第二份 gfw 清单（v2ray-rules-dat 的纯净版，纯域名列表）。
+    # 与上面的 gfw 互为补充：两个上游更新节奏不同，任一命中即走代理。
+    # type: http 让 mihomo 自己按 interval 自动拉取，无需外部定时任务。
+    type: http
+    behavior: domain
+    format: text                 # 纯域名文本，每行一个
+    interval: 86400              # 每天更新
+    proxy: PROXY
+    url: "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/gfw.txt"
+    path: ./providers/gfwlist-extra.txt
+  cncidr:
+    type: http
+    behavior: ipcidr
+    format: yaml
+    interval: 86400
+    proxy: PROXY
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/cncidr.txt"
+    path: ./providers/cncidr.yaml
+  direct:
+    type: http
+    behavior: domain
+    format: yaml
+    interval: 86400
+    proxy: PROXY
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt"
+    path: ./providers/direct.yaml
+  private:
+    type: http
+    behavior: domain
+    format: yaml
+    interval: 86400
+    proxy: PROXY
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/private.txt"
+    path: ./providers/private.yaml
+  reject:
+    type: http
+    behavior: domain
+    format: yaml
+    interval: 86400
+    proxy: PROXY
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt"
+    path: ./providers/reject.yaml
+
+# ---------------------------------------------------------------------------
+# 出口：PROXY 指向你的 server proxy
+# ---------------------------------------------------------------------------
+# ===========================================================================
+#  节点来源
+# ---------------------------------------------------------------------------
+#  两种方式，可同时使用：
+#    A. 手写节点（下面的 proxies:）—— 适合只有一两个自建节点
+#    B. Clash 订阅（下面的 proxy-providers:）—— 机场/自建面板给的订阅链接
+#
+#  订阅链接填在 proxy-providers 里。填好后节点会自动出现在
+#  「use:」引用它的策略组里，无需手写节点。
+# ===========================================================================
+proxies:
+  # 手写节点示例（测试用；生产环境建议改成你的真实节点，或改用订阅）
+  - name: "node-manual"
+    type: socks5
+    server: <PROXY_HOST>        # ← 你的节点地址
+    port: 1081
+    udp: true
+    client-fingerprint: chrome
+    # username: "user"
+    # password: "pass"
+
+# ---------------------------------------------------------------------------
+#  订阅（Clash 订阅链接填这里）
+#  ---------------------------------------------------------------------------
+#  用法：
+#    1. 把 url 换成你的订阅链接
+#    2. 把 enabled 设为 true
+#    3. 重启或热重载： systemctl reload mihomo   （或 UI 里点「热重载」）
+#
+#  订阅会自动更新：interval 秒（默认 21600 = 6 小时）
+# ---------------------------------------------------------------------------
+proxy-providers:
+  sub-main:
+    type: http
+    url: "https://example.com/api/v1/client/subscribe?token=CHANGE_ME"
+    interval: 21600              # 6 小时自动更新一次
+    path: ./providers/sub-main.yaml
+    proxy: PROXY                 # 用代理拉订阅（订阅域名常被墙）
+    # size-limit: 5242880        # 限制 5MB，防异常大文件
+    exclude-filter: "过期|剩余|流量|官网|订阅"   # 过滤掉机场的「信息节点」
+    health-check:                # 节点健康检查（决定 alive 状态）
+      enable: true
+      interval: 300
+      url: https://www.gstatic.com/generate_204
+      lazy: false                # false = 即使未选中也检查，避免切过去才发现挂了
+    header:
+      User-Agent:
+        - "clash.meta"
+        - "mihomo/1.19.34"
+
+# ===========================================================================
+#  策略组
+# ---------------------------------------------------------------------------
+#  fallback  : 按顺序挑「第一个可用」的（主节点挂了自动切下一个）★ 容灾
+#  url-test  : 在可用的里面挑延迟最低的           ★ 择优
+#  select    : 手动选
+#
+#  推荐链路：PROXY(select) → fallback(容灾) → auto(择优) → 具体节点
+# ===========================================================================
+proxy-groups:
+  # ===========================================================================
+  #  总入口：PROXY 决定「用哪套选节点规则」，页面上的总开关切的就是这里
+  #  —— 把 DIRECT 放在最后等于「兜底直连」：万一所有节点都挂了，
+  #     流量退回直连，家里网络不会因为节点全挂而完全断掉。
+  # ===========================================================================
+  - name: PROXY
+    type: select
+    proxies: [balance, fallback, auto, node-manual, DIRECT]
+    use: [sub-main]
+
+  # ---- 分散+黏滞：多节点分摊流量，单个挂了立刻换（请求当下重试）----
+  #   strategy: sticky-sessions —— 同一域名 10 分钟内固定用同一节点，
+  #           该节点不可用时立刻换下一个可用节点（不等心跳超时）。
+  #   实测：全部节点挂掉后会回落到列表末尾的 DIRECT，不会整体断网。
+  - name: balance
+    type: load-balance
+    strategy: sticky-sessions
+    proxies: [node-manual, DIRECT]
+    use: [sub-main]
+    url: https://www.gstatic.com/generate_204
+    interval: 60
+    lazy: false
+
+  # ---- 容灾：按顺序，第一个活着的就用（★ 节点故障自动切换）----
+  - name: fallback
+    type: fallback
+    proxies: [node-manual]
+    use: [sub-main]
+    url: https://www.gstatic.com/generate_204
+    interval: 60                 # 每 60s 检查一次，故障切换更快
+    lazy: false
+
+  # ---- 择优：延迟最低的 ----
+  - name: auto
+    type: url-test
+    proxies: [node-manual]
+    use: [sub-main]
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+
+# ---------------------------------------------------------------------------
+# 规则：自上而下首个匹配生效
+# ---------------------------------------------------------------------------
+rules:
+  - RULE-SET,private,DIRECT                # 内网域名
+  - RULE-SET,reject,REJECT                 # 广告/追踪
+  - RULE-SET,direct,DIRECT                 # 明确直连（银行、国内服务）
+  - RULE-SET,cncidr,DIRECT,no-resolve      # 国内 IP 段直连
+  - RULE-SET,gfw,PROXY                     # ★ gfwlist -> server proxy
+  - RULE-SET,gfw-extra,PROXY               # ★ 官方 gfwlist 补充
+  - MATCH,DIRECT                           # 兜底直连；想全部走代理改 PROXY
