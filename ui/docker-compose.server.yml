@@ -69,3 +69,16 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+    # 接入 Caddy 的 proxy 网络，让 proxy.lan 能反代到本容器
+    # （caddy 在 proxy 网络，本容器默认在 ui_default，两者原本不通）
+    networks:
+      - default
+      - proxy
+
+networks:
+  # compose 自动创建的默认网络
+  default:
+  # Caddy 使用的外部网络（docker network create proxy 创建）
+  proxy:
+    external: true

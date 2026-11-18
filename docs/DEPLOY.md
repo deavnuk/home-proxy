@@ -172,26 +172,60 @@ curl -s --unix-socket /run/mihomo/ctl.sock \
 | 国内网站也慢 | 网关被改成了本机 | 改回 Merlin |
 | 重启后面板失效 | mihomo 是手工进程，socket 丢了 | `sudo install-service.sh` |
 
-## 八、文件位置
+## 八、目录结构
+
+本方案分两处（容器与项目分离，符合 `~/stacks/` 约定）：
 
 ```
-~/home-proxy/
-├── README.md                  总览
-├── docs/
-│   ├── DEPLOY.md              ← 本文
-│   ├── PRD.md                 产品需求
-│   ├── TECH_DESIGN.md         技术方案
-│   └── UX_DESIGN.md           交互规范
-├── config/
-│   ├── config.yaml            主配置（面板可编辑）
-│   └── providers/             规则集（自动更新）
-├── net/nftables-transp.conf   nft 规则模板
-├── scripts/
-│   ├── install-service.sh     装 systemd 服务
-│   ├── deploy-mode-b.sh       模式 B 部署
-│   ├── set-mode.sh            查看/切换模式说明
-│   └── e2e-test.sh            端到端测试
-├── systemd/mihomo.service     systemd unit
-├── router/merlin-setup.md     Merlin 详细配置
-└── ui/                        Web 面板（Docker）
+~/stacks/home-proxy/            容器（与 caddy/jellyfin 等一致）
+├── backend/                    代码（app/ static/ tests/ Dockerfile）
+├── docker-compose.yml          接入 proxy 网络
+├── .env                        密码与路径
+└── backups/                    配置备份
+
+/opt/mihomo/                    mihomo 运行目录（systemd 用）
+├── mihomo                      二进制
+├── config.yaml                 配置（含 secret）
+├── providers/                  规则集
+└── geoip.metadb
+
+/run/mihomo/ctl.sock           控制接口（tmpfs，重启重建）
+
+~/home-proxy/                  项目（文档、脚本、模板）
+├── README.md
+├── docs/  router/  systemd/  net/
+└── scripts/                    部署与运维脚本
 ```
+
+### 为什么这样分
+
+| 位置 | 放什么 | 原因 |
+|---|---|---|
+| `~/stacks/home-proxy/` | 容器 | 与你其他服务的约定一致，Caddy 统一反代 |
+| `/opt/mihomo/` | 内核配置与二进制 | systemd 服务需要稳定路径，不受家目录权限影响 |
+| `~/home-proxy/` | 源码与文档 | 可随时 git pull 更新，不影响运行 |
+
+### 与 Caddy 的集成
+
+本容器必须加入 `proxy` 外部网络，否则 `proxy.lan` 反代不到：
+
+```yaml
+networks:
+  - proxy       # Caddy 所在网络
+  - default
+
+networks:
+  proxy:
+    external: true
+```
+
+对应 Caddyfile：
+
+```
+proxy.lan {
+    reverse_proxy home-proxy-ui:8080
+}
+```
+
+⚠️ healthcheck 必须用容器内端口 `8080`，不能用 `${UI_PORT}`（那是宿主机映射端口）。
+

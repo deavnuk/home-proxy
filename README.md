@@ -56,32 +56,25 @@
 ## 目录
 
 ```
-home-proxy/
-├── bin/mihomo                     # mihomo 二进制 (v1.19.34, linux-amd64)
-├── config/
-│   ├── config.yaml                # ★ 主配置（改 server proxy 地址在这里）
-│   ├── geoip.metadb               # GeoIP 库（离线，避免启动时下载）
-│   └── providers/                 # 规则集（可离线预置，mihomo 会自动更新）
-│       ├── gfw.yaml               # gfwlist（Loyalsoldier 版，4089 条）
-│       ├── gfwlist-extra.yaml     # 官方 gfwlist 转换产物（4113 条）
-│       ├── cncidr.yaml            # 国内 CIDR（直连）
-│       ├── direct.yaml            # 直连白名单
-│       ├── private.yaml           # 内网域名
-│       └── reject.yaml            # 广告/追踪
-├── net/nftables-transp.conf       # ★ nftables：TPROXY + DNS 劫持 + NAT
-├── scripts/
-│   ├── install-service.sh         # ★ 装 systemd 服务（开机自启）
-│   ├── deploy-mode-b.sh           # ★ 部署网络规则（sysctl+路由+nft）
-│   ├── set-mode.sh                # 配置指引与自检
-│   ├── update-rules.sh            # 每日刷新 gfwlist（systemd timer 调用）
-│   ├── gfwlist2clash.py           # 官方 gfwlist(base64) -> mihomo rule-provider
-│   ├── e2e-test.sh                # ★ 端到端验证（netns 模拟真实家庭网络）
-│   └── test/                      # 测试桩（SOCKS5 代理桩 + DNS 桩）
-├── systemd/
-│   ├── mihomo-update.service      # 规则更新
-│   └── mihomo-update.timer        # 每日
-└── router/merlin-setup.md         # ★ Merlin 侧配置步骤
+home-proxy/                      项目（文档与脚本）
+├── README.md
+├── docs/                         DEPLOY / PRD / TECH_DESIGN / UX_DESIGN
+├── router/merlin-setup.md        Merlin 配置（模式 B）
+├── net/nftables-transp.conf      nft 规则模板
+├── scripts/                      部署、自启、规则更新、e2e 测试
+└── systemd/                      unit 模板
+
+/opt/mihomo/                     运行时（systemd 服务）
+├── mihomo                        二进制
+├── config.yaml                   配置
+└── providers/                    规则集
+
+~/stacks/home-proxy/             容器（与 caddy 等其他服务一致）
+├── backend/                      代码
+├── docker-compose.yml            接入 proxy 网络
+└── .env
 ```
+
 
 ## 部署
 
